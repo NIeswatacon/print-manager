@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="Deps: tick:0.7.5">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/tick/tick/0.7.5/tick-0.7.5.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
