@@ -6,7 +6,7 @@
             [muuntaja.core :as m]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.cors :refer [wrap-cors]]
-            [print-manager.sync-service :as sync]
+    ;;[print-manager.sync-service :as sync]
             [print-manager.database :as db]
             [print-manager.cost-calculator :as calc]
             [clojure.spec.alpha :as s]))
@@ -213,9 +213,8 @@
      {:get {:handler get-impressao}}]
     ["/:id/preco"
      {:put {:parameters {:body {:preco-venda number?}}
-            :handler put-impressao-preco}}]
-    ["/sincronizar"
-     {:post {:handler post-sincronizar}}]
+            :handler    put-impressao-preco}}]
+    ;;["/sincronizar" {:post {:handler post-sincronizar}}]
     ["/top-lucrativas"
      {:get {:handler get-top-lucrativos}}]]
 

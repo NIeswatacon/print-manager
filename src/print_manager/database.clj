@@ -2,6 +2,7 @@
   (:require [next.jdbc :as jdbc]
             [next.jdbc.sql :as sql]
             [honey.sql :as hsql]
+            [cheshire.core :as json]
             [honey.sql.helpers :as h]))
 
 ;; Configuração do banco
@@ -64,7 +65,7 @@
                 (case tipo
                   "integer" (parse-long valor)
                   "decimal" (bigdec valor)
-                  "json" (cheshire.core/parse-string valor true)
+                  "json" (json/parse-string valor true)
                   valor)))
             {}
             configs)))
@@ -262,7 +263,7 @@
   (criar-impressao!
     {:bambu_task_id "task-123"
      :nome "Peça X"
-     :filamento_id #uuid "..."
+     :filamento_id #uuid "00000000-0000-0000-0000-000000000000"
      :data_inicio (java.time.Instant/now)
      :tempo_minutos 480
      :peso_usado_g 100
