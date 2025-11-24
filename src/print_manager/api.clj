@@ -6,7 +6,7 @@
             [muuntaja.core :as m]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.cors :refer [wrap-cors]]
-    ;;[print-manager.sync-service :as sync]
+            [print-manager.sync-service :as sync]
             [print-manager.database :as db]
             [print-manager.cost-calculator :as calc]
             [clojure.spec.alpha :as s]))
@@ -33,7 +33,7 @@
 
 ;;Auth endpoints
 (defn post-auth-bambu [{{:keys [email password]} :body-params}]
-  (let [result (db/autenticar-bambu! email  password)]
+  (let [result (sync/autenticar-bambu! email  password)]
     {:status (if (:success result) 200 401)
      :body result}))
 
@@ -51,8 +51,8 @@
 
 ;;Filamentos endpoints
 (defn get-filamentos [_]
-   {:status200
-    :body (db/listar-filamentos)})
+  {:status200
+   :body (db/listar-filamentos)})
 
 (defn post-filamento [{{:keys [nome marca tipo cor peso-inicial-g preco-compra]} :body-params}]
   (try
@@ -72,14 +72,14 @@
 
 (defn get-filamento [{{:keys [id]} :path-params}]
   (if-let [filamento (db/buscar-filamento (java.util.UUID/fromString id))]
-  {:status 200
-   :body filamento}
-  {:status 404
-   :body {:error "Filamento não encontrado"}}))
+    {:status 200
+     :body filamento}
+    {:status 404
+     :body {:error "Filamento não encontrado"}}))
 
 (defn delete-filamento [{{:keys [id]} :path-params}]
   ((try
-    (db/desativar-filamento! (java.util.UUID/fromString id))
+     (db/desativar-filamento! (java.util.UUID/fromString id))
      (catch Exception e
        {:status 404
         :body {:erro (.gettMessage e)}}))))
@@ -93,8 +93,8 @@
                      :offset (or offset 0)
                      :filament-id (when filamento-id
                                     (java.util.UUID/fromString filamento-id)))]
-  {:status 200
-   :body impressoes}))
+    {:status 200
+     :body impressoes}))
 
 (defn get-impressao [{{:keys [id]} :path-params}]
   (if-let [impressao (db/buscar-impressao (java.util.UUID/fromString id))]
@@ -137,9 +137,9 @@
     (db/update-config! chave valor)
     {:status 200
      :body {:chave chave :valor valor}}
-     (catch Exception e
-       {:status 400
-        :body {:error (.getMessage e)}})))
+    (catch Exception e
+      {:status 400
+       :body {:error (.getMessage e)}})))
 
 
 
@@ -244,7 +244,7 @@
 (defn wrap-exception [handler]
   (fn [request]
     ((try
-      (handler request)
+       (handler request)
        (catch Exception e
          {:status 500
           :body {:erro "Internal server error"

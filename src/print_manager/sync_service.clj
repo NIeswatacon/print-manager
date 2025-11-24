@@ -191,5 +191,5 @@
 
   ;; 5. Recalcular custos após ajustar configuração
   (db/update-config! "custo_kwh" "1.00")
-  (recalcular-custos-impressao! #uuid "...")
+  (recalcular-custos-impressao! #uuid "00000000-0000-0000-0000-000000000000")
   )
