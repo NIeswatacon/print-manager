@@ -12,7 +12,7 @@
    :host "localhost"
    :port 5432
    :user "postgres"
-   :password "postgres"})
+   :password "0508"})
 
 (def datasource (jdbc/get-datasource db-spec))
 
@@ -221,19 +221,17 @@
 (defn salvar-bambu-credentials!
   "Salva credenciais da Bambu Cloud"
   [{:keys [email access-token refresh-token token-expiry device-id]}]
-  (jdbc/execute-one!
-    datasource
-    ["INSERT INTO bambu_credentials
-     (email, access_token, refresh_token, token_expiry, device_id)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (email) DO UPDATE SET
-       access_token = EXCLUDED.access_token,
-       refresh_token = EXCLUDED.refresh_token,
-       token_expiry = EXCLUDED.token_expiry,
-       device_id = EXCLUDED.device_id,
-       updated_at = CURRENT_TIMESTAMP
-     RETURNING *"
-     email access-token refresh-token token-expiry device-id]))
+  (let [token-expiry-ts (when token-expiry
+                          (java.sql.Timestamp/from token-expiry))]
+    (jdbc/execute-one!
+      datasource
+      ["INSERT INTO bambu_credentials
+        (email, access_token, refresh_token, token_expiry, device_id, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        RETURNING *"
+       email access-token refresh-token token-expiry-ts device-id])))
+
+
 
 (defn buscar-bambu-credentials
   "Busca credenciais salvas da Bambu"

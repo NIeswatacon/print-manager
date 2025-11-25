@@ -1,0 +1,31 @@
+### Health Check
+GET http://localhost:3000/api/health
+
+### Autenticar Bambu
+POST http://localhost:3000/api/auth/bambu
+Content-Type: application/json
+
+{
+  "email": "joaoabmorais@gmail.com",
+  "password": "Tgcfnaf231@"
+}
+
+### 2 - Confirmar com código
+POST http://localhost:3000/api/auth/bambu
+Content-Type: application/json
+
+{
+  "email": "joaoabmorais@gmail.com",
+  "code": "294774"
+}
+
+
+### Ver status
+GET http://localhost:3000/api/auth/status
+
+### Listar filamentos
+GET http://localhost:3000/api/filamentos
+
+### Sincronizar impressão
+POST http://localhost:3000/api/impressoes/sincronizar
+
