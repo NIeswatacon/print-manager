@@ -6,8 +6,8 @@ POST http://localhost:3000/api/auth/bambu
 Content-Type: application/json
 
 {
-  "email": "joaoabmorais@gmail.com",
-  "password": "Tgcfnaf231@"
+  "email": "isaacnewton.montinegro@gmail.com",
+  "password": "Rising2003!"
 }
 
 ### 2 - Confirmar com código
@@ -15,8 +15,8 @@ POST http://localhost:3000/api/auth/bambu
 Content-Type: application/json
 
 {
-  "email": "joaoabmorais@gmail.com",
-  "code": "294774"
+  "email": "isaacnewton.montinegro@gmail.com",
+  "code": "217239"
 }
 
 
@@ -29,3 +29,34 @@ GET http://localhost:3000/api/filamentos
 ### Sincronizar impressão
 POST http://localhost:3000/api/impressoes/sincronizar
 
+### impressão
+GET http://localhost:3000/api/impressoes
+
+### impressão lucrativa
+GET http://localhost:3000/api/impressoes/top-lucrativas
+
+### Adicionar filamento PLA genérico
+POST http://localhost:3000/api/filamentos
+Content-Type: application/json
+
+{
+  "nome": "PLA Genérico",
+  "marca": "Sem marca",
+  "tipo": "PLA",
+  "cor": "Variado",
+  "peso-inicial-g": 1000,
+  "preco-compra": 80.00
+}
+
+### Adicionar filamento PLA Preto Bambu
+POST http://localhost:3000/api/filamentos
+Content-Type: application/json
+
+{
+  "nome": "PLA Preto Bambu",
+  "marca": "Bambu Lab",
+  "tipo": "PLA",
+  "cor": "Preto",
+  "peso-inicial-g": 1000,
+  "preco-compra": 89.90
+}

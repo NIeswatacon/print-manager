@@ -3,10 +3,13 @@
 
 ;; Specs para validação
 (s/def ::tempo-minutos pos-int?)
-(s/def ::peso-usado-g pos?)
-(s/def ::custo-por-kg pos?)
+(s/def ::peso-usado-g (s/and number? pos?))
+(s/def ::preco-venda (s/nilable number?))
+
 (s/def ::potencia-watts pos-int?)
-(s/def ::custo-kwh pos?)
+(s/def ::tarifa-kwh (s/and number? pos?))
+;; >>> FALTAVA ESTE SPEC <<<
+(s/def ::custo-por-kg (s/and number? pos?))
 
 (defn calcular-custo-filamento
   "Calcula o custo do filamento usado na impressão"
@@ -16,15 +19,26 @@
   (* peso-usado-g (/ custo-por-kg 1000)))
 
 (defn calcular-custo-energia
-  "Calcula o custo de energia da impressão
-   Fórmula: (potencia_watts / 1000) * (tempo_minutos / 60) * custo_kwh"
-  [tempo-minutos potencia-watts custo-kwh]
-  {:pre [(s/valid? ::tempo-minutos tempo-minutos)
-         (s/valid? ::potencia-watts potencia-watts)
-         (s/valid? ::custo-kwh custo-kwh)]}
-  (let [tempo-horas (/ tempo-minutos 60.0)
-        kwh-consumido (* (/ potencia-watts 1000.0) tempo-horas)]
-    (* kwh-consumido custo-kwh)))
+  "Calcula o custo de energia com base no tempo (min), potência (W) e tarifa (R$/kWh)."
+  [tempo-minutos potencia-watts tarifa-kwh]
+
+  ;; Validação simples, sem spec/assert
+  (when-not (and (number? tempo-minutos)
+                 (>= tempo-minutos 0)
+                 (number? potencia-watts)
+                 (pos? potencia-watts)
+                 (number? tarifa-kwh)
+                 (pos? tarifa-kwh))
+    (throw (ex-info "Parâmetros inválidos para cálculo de energia"
+                    {:tempo-minutos tempo-minutos
+                     :potencia-watts potencia-watts
+                     :tarifa-kwh tarifa-kwh})))
+
+  (let [horas (/ (double tempo-minutos) 60.0)
+        kwh   (/ (* (double potencia-watts) horas) 1000.0)]
+    ;; tarifa-kwh provavelmente já vem como BigDecimal (por causa do config),
+    ;; então converto kwh pra BigDecimal também:
+    (* (bigdec kwh) (bigdec tarifa-kwh))))
 
 (defn calcular-custo-fixo
   "Calcula o custo fixo por impressão baseado no custo mensal e impressões/mês"
@@ -76,114 +90,90 @@
         divisor (- 1 (/ total-percentuais 100.0))]
     (/ preco-base divisor)))
 
-(defn calcular-preco-lojista
-  "Calcula o preço de venda para lojista (50% do preço consumidor)"
-  [preco-consumidor]
-  (/ preco-consumidor 2))
+  (defn calcular-preco-lojista
+    "Calcula o preço de venda para lojista (50% do preço consumidor)"
+    [preco-consumidor]
+    (/ preco-consumidor 2))
 
-(defn calcular-lucros
-  "Calcula lucro bruto e líquido"
-  [preco-venda custo-total {:keys [imposto-percentual
-                                   taxa-cartao-percentual
-                                   custo-anuncio-percentual]
-                            :or {imposto-percentual 8
-                                 taxa-cartao-percentual 5
-                                 custo-anuncio-percentual 20}}]
-  (let [lucro-bruto (- preco-venda custo-total)
-        total-deducoes (* preco-venda
-                          (/ (+ imposto-percentual
-                                taxa-cartao-percentual
-                                custo-anuncio-percentual)
-                             100.0))
-        lucro-liquido (- lucro-bruto total-deducoes)]
-    {:lucro-bruto lucro-bruto
-     :lucro-liquido lucro-liquido
-     :margem-percentual (if (pos? preco-venda)
-                          (* 100 (/ lucro-liquido preco-venda))
-                          0)}))
+  (defn calcular-lucros
+    "Calcula lucro bruto e líquido"
+    [preco-venda custo-total {:keys [imposto-percentual
+                                     taxa-cartao-percentual
+                                     custo-anuncio-percentual]
+                              :or {imposto-percentual 8
+                                   taxa-cartao-percentual 5
+                                   custo-anuncio-percentual 20}}]
+    (let [lucro-bruto (- preco-venda custo-total)
+          total-deducoes (* preco-venda
+                            (/ (+ imposto-percentual
+                                  taxa-cartao-percentual
+                                  custo-anuncio-percentual)
+                               100.0))
+          lucro-liquido (- lucro-bruto total-deducoes)]
+      {:lucro-bruto lucro-bruto
+       :lucro-liquido lucro-liquido
+       :margem-percentual (if (pos? preco-venda)
+                            (* 100 (/ lucro-liquido preco-venda))
+                            0)}))
 
-(defn calcular-impressao-completa
-  "Calcula todos os custos e preços de uma impressão"
-  [impressao config]
-  (let [;; Custos individuais
-        custo-filamento (calcular-custo-filamento
-                          (:peso-usado-g impressao)
-                          (:custo-por-kg config))
+  (defn calcular-impressao-completa
+    "Calcula todos os custos e preços de uma impressão"
+    [impressao config]
+    (let [;; garante que vamos achar a potência, mesmo que a chave seja outra
+          potencia-watts (or (:potencia-watts config)
+                             (:potencia-impressora-watts config)
+                             1300)          ;; fallback seguro
 
-        custo-energia (calcular-custo-energia
-                        (:tempo-minutos impressao)
-                        (:potencia-watts config)
-                        (:custo-kwh config))
+          tarifa-kwh     (or (:custo-kwh config)
+                             (:tarifa-kwh config)
+                             0.90M)
 
-        custo-fixo (calcular-custo-fixo
-                     (:custo-fixo-mensal config)
-                     (:impressoes-mes config))
+          ;; Custos individuais
+          custo-filamento (calcular-custo-filamento
+                            (:peso-usado-g impressao)
+                            (:custo-por-kg config))
 
-        custo-amortizacao (calcular-amortizacao
-                            (:tempo-minutos impressao)
-                            (:valor-impressora config)
-                            (:vida-util-horas config))
+          custo-energia (calcular-custo-energia
+                          (:tempo-minutos impressao)
+                          potencia-watts
+                          tarifa-kwh)
 
-        ;; Custo total
-        custo-total (calcular-custo-total
-                      {:custo-filamento custo-filamento
-                       :custo-energia custo-energia
-                       :custo-fixo custo-fixo
-                       :custo-amortizacao custo-amortizacao
-                       :custo-acessorios (or (:custo-acessorios impressao) 0)
-                       :percentual-falhas (:percentual-falhas config)})
+          custo-fixo (calcular-custo-fixo
+                       (:custo-fixo-mensal config)
+                       (:impressoes-mes config))
 
-        ;; Preços sugeridos
-        preco-consumidor (calcular-preco-consumidor custo-total config)
-        preco-lojista (calcular-preco-lojista preco-consumidor)
+          custo-amortizacao (calcular-amortizacao
+                              (:tempo-minutos impressao)
+                              (:valor-impressora config)
+                              (:vida-util-horas config))
 
-        ;; Usar preço real se fornecido, senão usar sugestão
-        preco-venda (or (:preco-venda impressao) preco-consumidor)
+          ;; Custo total
+          custo-total (calcular-custo-total
+                        {:custo-filamento     custo-filamento
+                         :custo-energia       custo-energia
+                         :custo-fixo          custo-fixo
+                         :custo-amortizacao   custo-amortizacao
+                         :custo-acessorios    (or (:custo-acessorios impressao) 0)
+                         :percentual-falhas   (:percentual-falhas config)})
 
-        ;; Lucros
-        lucros (calcular-lucros preco-venda custo-total config)]
+          ;; Preços sugeridos
+          preco-consumidor (calcular-preco-consumidor custo-total config)
+          preco-lojista    (calcular-preco-lojista preco-consumidor)
 
-    {:custo-filamento (bigdec (format "%.2f" custo-filamento))
-     :custo-energia (bigdec (format "%.2f" custo-energia))
-     :custo-fixo (bigdec (format "%.2f" custo-fixo))
-     :custo-amortizacao (bigdec (format "%.2f" custo-amortizacao))
-     :custo-total (bigdec (format "%.2f" custo-total))
-     :preco-consumidor-sugerido (bigdec (format "%.2f" preco-consumidor))
-     :preco-lojista-sugerido (bigdec (format "%.2f" preco-lojista))
-     :preco-venda-real (bigdec (format "%.2f" preco-venda))
-     :lucro-bruto (bigdec (format "%.2f" (:lucro-bruto lucros)))
-     :lucro-liquido (bigdec (format "%.2f" (:lucro-liquido lucros)))
-     :margem-percentual (bigdec (format "%.2f" (:margem-percentual lucros)))}))
+          ;; Usar preço real se fornecido, senão usar sugestão
+          preco-venda (or (:preco-venda impressao) preco-consumidor)
 
-(comment
-  ;; Exemplo de uso:
+          ;; Lucros
+          lucros (calcular-lucros preco-venda custo-total config)]
 
-  (def config
-    {:custo-por-kg 100.0
-     :potencia-watts 1300
-     :custo-kwh 0.90
-     :custo-fixo-mensal 300.0
-     :impressoes-mes 40
-     :valor-impressora 4500.0
-     :vida-util-horas 20000
-     :percentual-falhas 15
-     :markup 5
-     :imposto-percentual 8
-     :taxa-cartao-percentual 5
-     :custo-anuncio-percentual 20})
-
-  (def impressao
-    {:tempo-minutos 480
-     :peso-usado-g 100
-     :custo-acessorios 0
-     :preco-venda nil}) ; nil = usar preço sugerido
-
-  (calcular-impressao-completa impressao config)
-  ;; => {:custo-filamento 10.00M
-  ;;     :custo-energia 9.36M
-  ;;     :custo-fixo 7.50M
-  ;;     :custo-amortizacao 1.80M
-  ;;     :custo-total 33.06M
-  ;;     :preco-consumidor-sugerido 245.97M
-  ;;     ...}
-  )
+      {:custo-filamento           (bigdec (format "%.2f" custo-filamento))
+       :custo-energia             (bigdec (format "%.2f" custo-energia))
+       :custo-fixo                (bigdec (format "%.2f" custo-fixo))
+       :custo-amortizacao         (bigdec (format "%.2f" custo-amortizacao))
+       :custo-total               (bigdec (format "%.2f" custo-total))
+       :preco-consumidor-sugerido (bigdec (format "%.2f" preco-consumidor))
+       :preco-lojista-sugerido    (bigdec (format "%.2f" preco-lojista))
+       :preco-venda-real          (bigdec (format "%.2f" preco-venda))
+       :lucro-bruto               (bigdec (format "%.2f" (:lucro-bruto lucros)))
+       :lucro-liquido             (bigdec (format "%.2f" (:lucro-liquido lucros)))
+       :margem-percentual         (bigdec (format "%.2f" (:margem-percentual lucros)))}))

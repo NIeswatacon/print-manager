@@ -9,12 +9,9 @@
             [print-manager.sync-service :as sync]
             [print-manager.database :as db]
             [print-manager.cost-calculator :as calc]
-            [clojure.spec.alpha :as s])
-  (:import [java.util UUID]
-           [java.time Instant LocalDate]))
+            [clojure.spec.alpha :as s]))
 
 ;; Specs para validação de requisições
-
 (s/def ::nome string?)
 (s/def ::marca string?)
 (s/def ::tipo #{"PLA" "PLA_SILK" "PETG" "ABS" "TPU" "ASA"})
@@ -23,32 +20,29 @@
 (s/def ::preco-compra pos?)
 (s/def ::email string?)
 (s/def ::password string?)
-(s/def ::code string?)
 
 ;; Handlers
-
 (defn health-check [_]
   {:status 200
    :body {:status "ok"
-          :timestamp (str (Instant/now))}})
+          :timestamp (str (java.time.Instant/now))}})
 
 ;; Auth endpoints
-
 (defn post-auth-bambu [{{:keys [email password code]} :body-params}]
   (cond
     (and email password)
     (let [result (sync/autenticar-bambu-com-senha! email password)]
-      {:status (if (:success result) 200 200)  ; 200 mesmo se requires-code
-       :body result})
+      {:status (if (:success result) 200 200) ;; 200 mesmo quando requires-code
+       :body   result})
 
     (and email code)
     (let [result (sync/autenticar-bambu-com-codigo! email code)]
       {:status (if (:success result) 200 401)
-       :body result})
+       :body   result})
 
     :else
     {:status 400
-     :body {:error "Envie {email, password} ou {email, code}"}}))
+     :body {:error "Envie {email, password} para solicitar código ou {email, code} para confirmar."}}))
 
 (defn get-auth-status [_]
   (if-let [creds (db/buscar-bambu-credentials)]
@@ -61,29 +55,30 @@
      :body {:authenticated false}}))
 
 ;; Filamentos endpoints
-
 (defn get-filamentos [_]
   {:status 200
    :body (db/listar-filamentos)})
 
-(defn post-filamento [{{:keys [nome marca tipo cor peso-inicial-g preco-compra]} :body-params}]
+(defn post-filamento
+  [{{:keys [nome marca tipo cor peso-inicial-g preco-compra]} :body-params}]
   (try
     (let [filamento (db/criar-filamento!
-                      {:nome nome
-                       :marca marca
-                       :tipo tipo
-                       :cor cor
-                       :peso-inicial-g peso-inicial-g
-                       :preco-compra preco-compra
-                       :data-compra (Instant/now)})]
+                      {:nome            nome
+                       :marca           marca
+                       :tipo            tipo
+                       :cor             cor
+                       :peso-inicial-g  peso-inicial-g
+                       :preco-compra    preco-compra
+                       ;; AQUI: Timestamp em vez de Instant
+                       :data-compra (java.sql.Timestamp/from (java.time.Instant/now))})]
       {:status 201
-       :body filamento})
+       :body   filamento})
     (catch Exception e
       {:status 400
-       :body {:error (.getMessage e)}})))
+       :body {:erro (.getMessage e)}})))
 
 (defn get-filamento [{{:keys [id]} :path-params}]
-  (if-let [filamento (db/buscar-filamento (UUID/fromString id))]
+  (if-let [filamento (db/buscar-filamento (java.util.UUID/fromString id))]
     {:status 200
      :body filamento}
     {:status 404
@@ -91,29 +86,29 @@
 
 (defn delete-filamento [{{:keys [id]} :path-params}]
   (try
-    (db/desativar-filamento! (UUID/fromString id))
-    {:status 204}
+    (db/desativar-filamento! (java.util.UUID/fromString id))
+    {:status 204
+     :body nil}
     (catch Exception e
-      {:status 400
-       :body {:error (.getMessage e)}})))
+      {:status 404
+       :body {:erro (.getMessage e)}})))
 
 ;; Impressões endpoints
-
 (defn get-impressoes [{{:keys [limit offset filamento-id]} :query-params}]
   (let [impressoes (db/listar-impressoes
                      :limit (or limit 100)
                      :offset (or offset 0)
-                     :filamento-id (when filamento-id
-                                     (UUID/fromString filamento-id)))]
+                     :filament-id (when filamento-id
+                                    (java.util.UUID/fromString filamento-id)))]
     {:status 200
      :body impressoes}))
 
 (defn get-impressao [{{:keys [id]} :path-params}]
-  (if-let [impressao (db/buscar-impressao (UUID/fromString id))]
+  (if-let [impressao (db/buscar-impressao (java.util.UUID/fromString id))]
     {:status 200
      :body impressao}
     {:status 404
-     :body {:error "Impressão não encontrada"}}))
+     :body {:erro "Impressão não encontrada"}}))
 
 (defn post-sincronizar [_]
   (let [result (sync/sincronizar-impressoes!)]
@@ -121,21 +116,20 @@
      :body result}))
 
 (defn put-impressao-preco [request]
-  (let [id (get-in request [:path-params :id])
+  (let [id          (get-in request [:path-params :id])
         preco-venda (get-in request [:body-params :preco-venda])]
     (try
-      (db/atualizar-impressao! (UUID/fromString id)
+      (db/atualizar-impressao! (java.util.UUID/fromString id)
                                {:preco_venda preco-venda})
       (let [custos (sync/recalcular-custos-impressao!
-                     (UUID/fromString id))]
+                     (java.util.UUID/fromString id))]
         {:status 200
-         :body custos})
+         :body   custos})
       (catch Exception e
         {:status 400
          :body {:error (.getMessage e)}}))))
 
-;; Configurações endpoints
-
+;; Configuração de endpoints
 (defn get-configuracoes [_]
   {:status 200
    :body (db/get-all-configs)})
@@ -151,18 +145,17 @@
        :body {:error (.getMessage e)}})))
 
 ;; Relatórios endpoints
-
 (defn get-relatorio-mensal [{{:keys [ano mes]} :query-params}]
-  (let [ano (or ano (.getYear (LocalDate/now)))
-        mes (or mes (.getMonthValue (LocalDate/now)))]
+  (let [ano (or ano (.getYear (java.time.LocalDate/now)))
+        mes (or mes (.getMonthValue (java.time.LocalDate/now)))]
     {:status 200
      :body (db/relatorio-mensal ano mes)}))
 
 (defn get-relatorio-filamento [{{:keys [id]} :path-params}]
   {:status 200
-   :body (db/relatorio-por-filamento (UUID/fromString id))})
+   :body (db/relatorio-por-filamento (java.util.UUID/fromString id))})
 
-(defn get-top-lucrativas [{{:keys [n]} :query-params}]
+(defn get-top-lucrativos [{{:keys [n]} :query-params}]
   {:status 200
    :body (db/top-impressoes-lucrativas (or n 10))})
 
@@ -171,19 +164,17 @@
    :body (sync/estatisticas-gerais)})
 
 ;; Calculadora endpoints
-
 (defn post-simular-custo [{{:keys [tempo-minutos peso-usado-g preco-venda]} :body-params}]
-  (let [config (db/get-all-configs)
-        custos (calc/calcular-impressao-completa
-                 {:tempo-minutos tempo-minutos
-                  :peso-usado-g peso-usado-g
-                  :preco-venda preco-venda}
-                 config)]
+  (let  [config (db/get-all-configs)
+         custos (calc/calcular-impressao-completa
+                  {:tempo-minutos tempo-minutos
+                   :peso-usado-g peso-usado-g
+                   :preco-venda preco-venda}
+                  config)]
     {:status 200
      :body custos}))
 
 ;; Rotas
-
 (defn routes []
   ["/api"
    ["/health"
@@ -191,48 +182,45 @@
 
    ["/auth"
     ["/bambu"
-     {:post {:parameters {:body {:email string?
-                                 :password (s/? string?)
-                                 :code (s/? string?)}}
+     {:post {:parameters {:body (s/or :senha  (s/keys :req-un [::email ::password])
+                                      :codigo (s/keys :req-un [::email]
+                                                      :opt-un [::password]))}
              :handler post-auth-bambu}}]
     ["/status"
      {:get {:handler get-auth-status}}]]
 
    ["/filamentos"
-    [""
-     {:get {:handler get-filamentos}
-      :post {:parameters {:body {:nome string?
-                                 :marca string?
-                                 :tipo string?
-                                 :cor string?
-                                 :peso-inicial-g number?
-                                 :preco-compra number?}}
-             :handler post-filamento}}]
+    ["" {:get  {:handler get-filamentos}
+         :post {:parameters {:body {:nome           string?
+                                    :marca          string?
+                                    :tipo           string?
+                                    :cor            string?
+                                    :peso-inicial-g number?
+                                    :preco-compra   number?}}
+                :handler    post-filamento}}]
     ["/:id"
-     {:get {:handler get-filamento}
+     {:get    {:handler get-filamento}
       :delete {:handler delete-filamento}}]
     ["/:id/relatorio"
      {:get {:handler get-relatorio-filamento}}]]
 
    ["/impressoes"
-    [""
-     {:get {:handler get-impressoes}}]
+    ["" {:get {:handler get-impressoes}}]
     ["/sincronizar"
      {:post {:handler post-sincronizar}}]
     ["/top-lucrativas"
-     {:get {:handler get-top-lucrativas}}]
-    ["/:id"
+     {:get {:handler get-top-lucrativos}}]
+    ["/detalhe/:id"
      {:get {:handler get-impressao}}]
-    ["/:id/preco"
+    ["/detalhe/:id/preco"
      {:put {:parameters {:body {:preco-venda number?}}
-            :handler put-impressao-preco}}]]
+            :handler    put-impressao-preco}}]]
 
    ["/configuracoes"
-    [""
-     {:get {:handler get-configuracoes}}]
+    ["" {:get {:handler get-configuracoes}}]
     ["/:chave"
      {:put {:parameters {:body {:valor string?}}
-            :handler put-configuracao}}]]
+            :handler    put-configuracao}}]]
 
    ["/relatorios"
     ["/mensal"
@@ -243,29 +231,27 @@
    ["/calculadora"
     ["/simular"
      {:post {:parameters {:body {:tempo-minutos number?
-                                 :peso-usado-g number?
-                                 :preco-venda number?}}
-             :handler post-simular-custo}}]]])
+                                 :peso-usado-g  number?
+                                 :preco-venda   number?}}
+             :handler    post-simular-custo}}]]])
 
 ;; Middleware
-
 (defn wrap-exception [handler]
   (fn [request]
     (try
       (handler request)
       (catch Exception e
         {:status 500
-         :body {:error "Internal server error"
+         :body {:erro    "Internal server error"
                 :message (.getMessage e)}}))))
 
 ;; App
-
 (def app
   (ring/ring-handler
     (ring/router
       (routes)
-      {:data {:coercion spec-coercion/coercion
-              :muuntaja m/instance
+      {:data {:coercion  spec-coercion/coercion
+              :muuntaja  m/instance
               :middleware [muuntaja/format-middleware
                            coercion/coerce-exceptions-middleware
                            coercion/coerce-request-middleware
@@ -276,7 +262,6 @@
         {:not-found (constantly {:status 404 :body {:error "Not found"}})}))))
 
 ;; CORS wrapper
-
 (def app-with-cors
   (wrap-cors app
              :access-control-allow-origin [#".*"]
@@ -284,7 +269,6 @@
              :access-control-allow-headers ["Content-Type" "Authorization"]))
 
 ;; Server
-
 (defonce server (atom nil))
 
 (defn start-server! [& {:keys [port] :or {port 3000}}]
@@ -293,7 +277,7 @@
   (reset! server (jetty/run-jetty #'app-with-cors
                                   {:port port
                                    :join? false}))
-  (println (str "Server running on http://localhost:" port)))
+  (println (str "Server running on http://Localhost:" port)))
 
 (defn stop-server! []
   (when-let [s @server]

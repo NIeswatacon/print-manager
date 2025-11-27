@@ -90,34 +90,46 @@
 ;; ---------------------------------------------------------
 
 (defn processar-impressao
-  "Processa uma impressão do Bambu: calcula custos, salva no banco e atualiza estoque."
+  "Processa uma impressão do Bambu: calcula custos e salva no banco"
   [task-data filamento-id config]
-  (let [impressao-base {:bambu_task_id (:bambu-task-id task-data)
-                        :nome          (:nome task-data)
-                        :filamento_id  filamento-id
-                        :data_inicio   (:data-inicio task-data)
-                        :data_fim      (:data-fim task-data)
+  (let [;; ← ADICIONE: Buscar o filamento para pegar o custo-por-kg
+        filamento (db/buscar-filamento filamento-id)
+        custo-por-kg (:filamentos/custo_por_kg filamento)  ; ← NOVO!
+
+        ;; Dados básicos da task
+        impressao-base {:bambu_task_id (:bambu-task-id task-data)
+                        :nome (:nome task-data)
+                        :filamento_id filamento-id
+                        :data_inicio (:data-inicio task-data)
+                        :data_fim (:data-fim task-data)
                         :tempo_minutos (:tempo-minutos task-data)
-                        :peso_usado_g  (:peso-usado-g task-data)
-                        :status        (:status task-data)}
+                        :peso_usado_g (:peso-usado-g task-data)
+                        :status (:status task-data)}
+
+        ;; Calcular custos - PASSE o custo-por-kg!
         custos (calc/calcular-impressao-completa
                  {:tempo-minutos (:tempo-minutos task-data)
-                  :peso-usado-g  (:peso-usado-g task-data)}
-                 config)
+                  :peso-usado-g (:peso-usado-g task-data)}
+                 (assoc config :custo-por-kg custo-por-kg))  ; ← ADICIONE custo-por-kg ao config!
+
+        ;; Resto continua igual...
         impressao-completa (merge impressao-base
-                                  {:custo_filamento              (:custo-filamento custos)
-                                   :custo_energia                (:custo-energia custos)
-                                   :custo_fixo                   (:custo-fixo custos)
-                                   :custo_amortizacao            (:custo-amortizacao custos)
-                                   :custo_total                  (:custo-total custos)
-                                   :preco_venda                  (:preco-consumidor-sugerido custos)
-                                   :margem_lucro                 (:lucro-liquido custos)
-                                   :sincronizado                 true})]
-    ;; salvar impressão
+                                  {:custo_filamento (:custo-filamento custos)
+                                   :custo_energia (:custo-energia custos)
+                                   :custo_fixo (:custo-fixo custos)
+                                   :custo_amortizacao (:custo-amortizacao custos)
+                                   :custo_total (:custo-total custos)
+                                   :preco_venda (:preco-consumidor-sugerido custos)
+                                   :margem_lucro (:lucro-liquido custos)
+                                   :sincronizado true})]
+
+    ;; Salvar no banco
     (db/criar-impressao! impressao-completa)
-    ;; atualizar estoque se finalizada com sucesso
+
+    ;; Atualizar estoque de filamento
     (when (= (:status task-data) "success")
       (db/atualizar-estoque-filamento! filamento-id (:peso-usado-g task-data)))
+
     impressao-completa))
 
 ;; ---------------------------------------------------------
