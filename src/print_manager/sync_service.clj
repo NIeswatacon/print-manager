@@ -92,36 +92,47 @@
 (defn processar-impressao
   "Processa uma impressão do Bambu: calcula custos e salva no banco"
   [task-data filamento-id config]
-  (let [;; ← ADICIONE: Buscar o filamento para pegar o custo-por-kg
-        filamento (db/buscar-filamento filamento-id)
-        custo-por-kg (:filamentos/custo_por_kg filamento)  ; ← NOVO!
+  (let [;; Buscar o filamento para pegar o custo-por-kg
+        filamento     (db/buscar-filamento filamento-id)
+        custo-por-kg  (:filamentos/custo_por_kg filamento)
 
         ;; Dados básicos da task
         impressao-base {:bambu_task_id (:bambu-task-id task-data)
-                        :nome (:nome task-data)
-                        :filamento_id filamento-id
-                        :data_inicio (:data-inicio task-data)
-                        :data_fim (:data-fim task-data)
-                        :tempo_minutos (:tempo-minutos task-data)
-                        :peso_usado_g (:peso-usado-g task-data)
-                        :status (:status task-data)}
+                        :nome           (:nome task-data)
+                        :filamento_id   filamento-id
+                        :data_inicio    (:data-inicio task-data)
+                        :data_fim       (:data-fim task-data)
+                        :tempo_minutos  (:tempo-minutos task-data)
+                        :peso_usado_g   (:peso-usado-g task-data)
+                        :status         (:status task-data)}
 
-        ;; Calcular custos - PASSE o custo-por-kg!
+        ;; Calcular custos
         custos (calc/calcular-impressao-completa
                  {:tempo-minutos (:tempo-minutos task-data)
-                  :peso-usado-g (:peso-usado-g task-data)}
-                 (assoc config :custo-por-kg custo-por-kg))  ; ← ADICIONE custo-por-kg ao config!
+                  :peso-usado-g  (:peso-usado-g task-data)}
+                 (assoc config :custo-por-kg custo-por-kg))
 
-        ;; Resto continua igual...
-        impressao-completa (merge impressao-base
-                                  {:custo_filamento (:custo-filamento custos)
-                                   :custo_energia (:custo-energia custos)
-                                   :custo_fixo (:custo-fixo custos)
-                                   :custo_amortizacao (:custo-amortizacao custos)
-                                   :custo_total (:custo-total custos)
-                                   :preco_venda (:preco-consumidor-sugerido custos)
-                                   :margem_lucro (:lucro-liquido custos)
-                                   :sincronizado true})]
+        ;; Monta o mapa final que vai pro banco
+        impressao-completa
+        (merge impressao-base
+               {:custo_filamento           (:custo-filamento custos)
+                :custo_energia             (:custo-energia custos)
+                :custo_fixo                (:custo-fixo custos)
+                :custo_amortizacao         (:custo-amortizacao custos)
+                :custo_total               (:custo-total custos)
+
+                ;; 🔹 preços sugeridos
+                :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
+                :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
+
+                ;; 🔹 preço efetivo de venda (inicial = sugerido consumidor)
+                :preco_venda               (:preco-venda-real custos)
+                :preco_venda_real          (:preco-venda-real custos)
+
+                ;; lucro líquido vai pra margem_lucro
+                :margem_lucro              (:lucro-liquido custos)
+                :sincronizado              true})]
+
 
     ;; Salvar no banco
     (db/criar-impressao! impressao-completa)
@@ -131,6 +142,7 @@
       (db/atualizar-estoque-filamento! filamento-id (:peso-usado-g task-data)))
 
     impressao-completa))
+
 
 ;; ---------------------------------------------------------
 ;; SINCRONIZAÇÃO COM Bambu Cloud
@@ -176,20 +188,24 @@
   (when-let [impressao (db/buscar-impressao impressao-id)]
     (let [config (db/get-all-configs)
           custos (calc/calcular-impressao-completa
-                   {:tempo-minutos (:impressoes/tempo_minutos impressao)
-                    :peso-usado-g  (:impressoes/peso_usado_g impressao)
+                   {:tempo-minutos    (:impressoes/tempo_minutos impressao)
+                    :peso-usado-g     (:impressoes/peso_usado_g impressao)
                     :custo-acessorios (:impressoes/custo_acessorios impressao)
-                    :preco-venda   (:impressoes/preco_venda impressao)}
+                    :preco-venda      (:impressoes/preco_venda impressao)}
                    config)]
       (db/atualizar-impressao!
         impressao-id
-        {:custo_filamento   (:custo-filamento custos)
-         :custo_energia     (:custo-energia custos)
-         :custo_fixo        (:custo-fixo custos)
-         :custo_amortizacao (:custo-amortizacao custos)
-         :custo_total       (:custo-total custos)
-         :margem_lucro      (:lucro-liquido custos)})
+        {:custo_filamento           (:custo-filamento custos)
+         :custo_energia             (:custo-energia custos)
+         :custo_fixo                (:custo-fixo custos)
+         :custo_amortizacao         (:custo-amortizacao custos)
+         :custo_total               (:custo-total custos)
+         :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
+         :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
+         :preco_venda_real          (:preco-venda-real custos)
+         :margem_lucro              (:lucro-liquido custos)})
       custos)))
+
 
 ;; ---------------------------------------------------------
 ;; ESTATÍSTICAS GERAIS

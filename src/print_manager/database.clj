@@ -3,7 +3,8 @@
             [next.jdbc.sql :as sql]
             [honey.sql :as hsql]
             [cheshire.core :as json]
-            [honey.sql.helpers :as h])
+            [honey.sql.helpers :as h]
+            [clojure.string :as str])
   (:import (java.time Instant)
            (java.sql Timestamp)))
 
@@ -73,13 +74,14 @@
   (let [configs (query {:select [:chave :valor :tipo]
                         :from   [:configuracoes]})]
     (reduce (fn [acc {:configuracoes/keys [chave valor tipo]}]
-              (assoc acc
-                (keyword chave)
-                (case tipo
-                  "integer" (parse-long valor)
-                  "decimal" (bigdec valor)
-                  "json"    (json/parse-string valor true)
-                  valor)))
+              (let [kw (keyword (str/replace chave "_" "-"))]  ;; converte _ -> -
+                (assoc acc
+                  kw
+                  (case tipo
+                    "integer" (parse-long valor)
+                    "decimal" (bigdec valor)
+                    "json"    (json/parse-string valor true)
+                    valor))))
             {}
             configs)))
 

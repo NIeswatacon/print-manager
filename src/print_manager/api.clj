@@ -9,9 +9,13 @@
             [print-manager.sync-service :as sync]
             [print-manager.database :as db]
             [print-manager.cost-calculator :as calc]
-            [clojure.spec.alpha :as s]))
+            [clojure.spec.alpha :as s])
+  (:import (java.math BigDecimal RoundingMode)))
 
-;; Specs para validação de requisições
+;; -----------------------------
+;; Specs para validação
+;; -----------------------------
+
 (s/def ::nome string?)
 (s/def ::marca string?)
 (s/def ::tipo #{"PLA" "PLA_SILK" "PETG" "ABS" "TPU" "ASA"})
@@ -21,13 +25,56 @@
 (s/def ::email string?)
 (s/def ::password string?)
 
-;; Handlers
+;; -----------------------------
+;; Helpers de formatação
+;; -----------------------------
+
+;; arredonda para 2 casas, mantendo número (não vira string)
+(defn round-2
+  [v]
+  (when v
+    (cond
+      ;; já é BigDecimal -> só ajusta scale
+      (instance? BigDecimal v)
+      (.setScale ^BigDecimal v 2 RoundingMode/HALF_UP)
+
+      ;; é número normal (double, long, etc.)
+      (number? v)
+      (.setScale (BigDecimal/valueOf (double v)) 2 RoundingMode/HALF_UP)
+
+      ;; qualquer outra coisa (nil, string etc.) deixa como está
+      :else v)))
+
+(defn format2
+  [m k]
+  (update m k round-2))
+
+(defn format-impressao [row]
+  (-> row
+      (format2 :impressoes/custo_filamento)
+      (format2 :impressoes/custo_energia)
+      (format2 :impressoes/custo_fixo)
+      (format2 :impressoes/custo_amortizacao)
+      (format2 :impressoes/custo_total)
+      (format2 :impressoes/preco_consumidor_sugerido)
+      (format2 :impressoes/preco_lojista_sugerido)
+      (format2 :impressoes/preco_venda_real)
+      (format2 :impressoes/margem_lucro)))
+
+
+;; -----------------------------
+;; Handlers básicos
+;; -----------------------------
+
 (defn health-check [_]
   {:status 200
    :body {:status "ok"
           :timestamp (str (java.time.Instant/now))}})
 
-;; Auth endpoints
+;; -----------------------------
+;; Auth endpoints (Bambu)
+;; -----------------------------
+
 (defn post-auth-bambu [{{:keys [email password code]} :body-params}]
   (cond
     (and email password)
@@ -54,7 +101,10 @@
     {:status 200
      :body {:authenticated false}}))
 
+;; -----------------------------
 ;; Filamentos endpoints
+;; -----------------------------
+
 (defn get-filamentos [_]
   {:status 200
    :body (db/listar-filamentos)})
@@ -63,13 +113,13 @@
   [{{:keys [nome marca tipo cor peso-inicial-g preco-compra]} :body-params}]
   (try
     (let [filamento (db/criar-filamento!
-                      {:nome            nome
-                       :marca           marca
-                       :tipo            tipo
-                       :cor             cor
-                       :peso-inicial-g  peso-inicial-g
-                       :preco-compra    preco-compra
-                       ;; AQUI: Timestamp em vez de Instant
+                      {:nome           nome
+                       :marca          marca
+                       :tipo           tipo
+                       :cor            cor
+                       :peso-inicial-g peso-inicial-g
+                       :preco-compra   preco-compra
+                       ;; Timestamp em vez de Instant direto
                        :data-compra (java.sql.Timestamp/from (java.time.Instant/now))})]
       {:status 201
        :body   filamento})
@@ -93,20 +143,27 @@
       {:status 404
        :body {:erro (.getMessage e)}})))
 
+;; -----------------------------
 ;; Impressões endpoints
-(defn get-impressoes [{{:keys [limit offset filamento-id]} :query-params}]
+;; -----------------------------
+
+(defn get-impressoes
+  [{{:keys [limit offset filamento-id]} :query-params}]
   (let [impressoes (db/listar-impressoes
                      :limit (or limit 100)
                      :offset (or offset 0)
-                     :filament-id (when filamento-id
-                                    (java.util.UUID/fromString filamento-id)))]
+                     :filamento-id (when filamento-id
+                                     (java.util.UUID/fromString filamento-id)))]
     {:status 200
-     :body impressoes}))
+     :body   (map format-impressao impressoes)}))
 
-(defn get-impressao [{{:keys [id]} :path-params}]
+
+(defn get-impressao
+  "{{GET /api/impressoes/detalhe/:id}} Retorna uma impressão formatada."
+  [{{:keys [id]} :path-params}]
   (if-let [impressao (db/buscar-impressao (java.util.UUID/fromString id))]
     {:status 200
-     :body impressao}
+     :body (format-impressao impressao)}
     {:status 404
      :body {:erro "Impressão não encontrada"}}))
 
@@ -115,12 +172,17 @@
     {:status 200
      :body result}))
 
-(defn put-impressao-preco [request]
+(defn put-impressao-preco
+  "{{PUT /api/impressoes/detalhe/:id/preco}} Atualiza o preço de venda real."
+  [request]
   (let [id          (get-in request [:path-params :id])
         preco-venda (get-in request [:body-params :preco-venda])]
     (try
+      ;; Atualiza preco_venda e preco_venda_real no banco
       (db/atualizar-impressao! (java.util.UUID/fromString id)
-                               {:preco_venda preco-venda})
+                               {:preco_venda      preco-venda
+                                :preco_venda_real preco-venda})
+      ;; Recalcula custos e lucros com esse novo preço
       (let [custos (sync/recalcular-custos-impressao!
                      (java.util.UUID/fromString id))]
         {:status 200
@@ -129,13 +191,17 @@
         {:status 400
          :body {:error (.getMessage e)}}))))
 
-;; Configuração de endpoints
+;; -----------------------------
+;; Configuração endpoints
+;; -----------------------------
+
 (defn get-configuracoes [_]
   {:status 200
    :body (db/get-all-configs)})
 
-(defn put-configuracao [{{:keys [chave]} :path-params
-                         {:keys [valor]} :body-params}]
+(defn put-configuracao
+  [{{:keys [chave]} :path-params
+    {:keys [valor]} :body-params}]
   (try
     (db/update-config! chave valor)
     {:status 200
@@ -144,7 +210,10 @@
       {:status 400
        :body {:error (.getMessage e)}})))
 
+;; -----------------------------
 ;; Relatórios endpoints
+;; -----------------------------
+
 (defn get-relatorio-mensal [{{:keys [ano mes]} :query-params}]
   (let [ano (or ano (.getYear (java.time.LocalDate/now)))
         mes (or mes (.getMonthValue (java.time.LocalDate/now)))]
@@ -163,18 +232,26 @@
   {:status 200
    :body (sync/estatisticas-gerais)})
 
+;; -----------------------------
 ;; Calculadora endpoints
-(defn post-simular-custo [{{:keys [tempo-minutos peso-usado-g preco-venda]} :body-params}]
+;; -----------------------------
+
+(defn post-simular-custo
+  "{{POST /api/calculadora/simular}} Simula custos sem gravar no banco."
+  [{{:keys [tempo-minutos peso-usado-g preco-venda]} :body-params}]
   (let  [config (db/get-all-configs)
          custos (calc/calcular-impressao-completa
                   {:tempo-minutos tempo-minutos
-                   :peso-usado-g peso-usado-g
-                   :preco-venda preco-venda}
+                   :peso-usado-g  peso-usado-g
+                   :preco-venda   preco-venda}
                   config)]
     {:status 200
      :body custos}))
 
+;; -----------------------------
 ;; Rotas
+;; -----------------------------
+
 (defn routes []
   ["/api"
    ["/health"
@@ -235,7 +312,10 @@
                                  :preco-venda   number?}}
              :handler    post-simular-custo}}]]])
 
+;; -----------------------------
 ;; Middleware
+;; -----------------------------
+
 (defn wrap-exception [handler]
   (fn [request]
     (try
@@ -245,7 +325,10 @@
          :body {:erro    "Internal server error"
                 :message (.getMessage e)}}))))
 
-;; App
+;; -----------------------------
+;; App / Server
+;; -----------------------------
+
 (def app
   (ring/ring-handler
     (ring/router
@@ -261,14 +344,12 @@
       (ring/create-default-handler
         {:not-found (constantly {:status 404 :body {:error "Not found"}})}))))
 
-;; CORS wrapper
 (def app-with-cors
   (wrap-cors app
              :access-control-allow-origin [#".*"]
              :access-control-allow-methods [:get :post :put :delete :options]
              :access-control-allow-headers ["Content-Type" "Authorization"]))
 
-;; Server
 (defonce server (atom nil))
 
 (defn start-server! [& {:keys [port] :or {port 3000}}]
@@ -292,9 +373,8 @@
   ;; Parar servidor
   (stop-server!)
 
-  ;; Testar endpoints:
+  ;; Testes rápidos:
   ;; curl http://localhost:3000/api/health
-  ;; curl -X POST http://localhost:3000/api/auth/bambu -H "Content-Type: application/json" -d '{"email":"seu@email.com","password":"senha"}'
-  ;; curl http://localhost:3000/api/filamentos
-  ;; curl http://localhost:3000/api/estatisticas
+  ;; curl http://localhost:3000/api/impressoes
+  ;; curl http://localhost:3000/api/impressoes/detalhe/<id>
   )

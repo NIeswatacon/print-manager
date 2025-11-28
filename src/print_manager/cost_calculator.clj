@@ -1,5 +1,7 @@
 (ns print-manager.cost-calculator
-  (:require [clojure.spec.alpha :as s]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]))
+
 
 ;; Specs para validação
 (s/def ::tempo-minutos pos-int?)
@@ -10,6 +12,14 @@
 (s/def ::tarifa-kwh (s/and number? pos?))
 ;; >>> FALTAVA ESTE SPEC <<<
 (s/def ::custo-por-kg (s/and number? pos?))
+
+(defn bd2
+  "Converte número para BigDecimal com 2 casas, independente do locale."
+  [x]
+  (-> (format "%.2f" (double x)) ; gera string "33,06" ou "33.06"
+      (str/replace "," ".")      ; garante ponto como separador
+      bigdec))
+
 
 (defn calcular-custo-filamento
   "Calcula o custo do filamento usado na impressão"
@@ -35,24 +45,24 @@
                      :tarifa-kwh tarifa-kwh})))
 
   (let [horas (/ (double tempo-minutos) 60.0)
-        kwh   (/ (* (double potencia-watts) horas) 1000.0)]
-    ;; tarifa-kwh provavelmente já vem como BigDecimal (por causa do config),
-    ;; então converto kwh pra BigDecimal também:
-    (* (bigdec kwh) (bigdec tarifa-kwh))))
+        kwh   (/ (* (double potencia-watts) horas) 1000.0)
+        kwh-real (* kwh 0.5)]
+    (* (bigdec kwh-real) (bigdec tarifa-kwh))))
 
 (defn calcular-custo-fixo
-  "Calcula o custo fixo por impressão baseado no custo mensal e impressões/mês"
-  [custo-fixo-mensal impressoes-mes]
-  (/ custo-fixo-mensal impressoes-mes))
+  "Custo fixo desabilitado por enquanto → sempre retorna 0M."
+  [_ _]
+  0M)
 
 (defn calcular-amortizacao
-  "Calcula a amortização da impressora por impressão
-   Fórmula: (valor_impressora / vida_util_horas) * (tempo_minutos / 60)"
+  "Calcula amortização da impressora. Se valores não existirem, retorna 0."
   [tempo-minutos valor-impressora vida-util-horas]
-  {:pre [(s/valid? ::tempo-minutos tempo-minutos)]}
   (let [tempo-horas (/ tempo-minutos 60.0)
-        custo-por-hora (/ valor-impressora vida-util-horas)]
-    (* custo-por-hora tempo-horas)))
+        valor (or valor-impressora 0)
+        vida  (or vida-util-horas 0)]
+    (if (pos? vida)
+      (* (/ valor vida) tempo-horas)
+      0M))) ;; se vida for zero ou nil → amortização = 0
 
 (defn calcular-custo-total
   "Calcula o custo total da impressão incluindo margem de falhas"
@@ -138,9 +148,7 @@
                           potencia-watts
                           tarifa-kwh)
 
-          custo-fixo (calcular-custo-fixo
-                       (:custo-fixo-mensal config)
-                       (:impressoes-mes config))
+          custo-fixo 0M
 
           custo-amortizacao (calcular-amortizacao
                               (:tempo-minutos impressao)
@@ -166,14 +174,14 @@
           ;; Lucros
           lucros (calcular-lucros preco-venda custo-total config)]
 
-      {:custo-filamento           (bigdec (format "%.2f" custo-filamento))
-       :custo-energia             (bigdec (format "%.2f" custo-energia))
-       :custo-fixo                (bigdec (format "%.2f" custo-fixo))
-       :custo-amortizacao         (bigdec (format "%.2f" custo-amortizacao))
-       :custo-total               (bigdec (format "%.2f" custo-total))
-       :preco-consumidor-sugerido (bigdec (format "%.2f" preco-consumidor))
-       :preco-lojista-sugerido    (bigdec (format "%.2f" preco-lojista))
-       :preco-venda-real          (bigdec (format "%.2f" preco-venda))
-       :lucro-bruto               (bigdec (format "%.2f" (:lucro-bruto lucros)))
-       :lucro-liquido             (bigdec (format "%.2f" (:lucro-liquido lucros)))
-       :margem-percentual         (bigdec (format "%.2f" (:margem-percentual lucros)))}))
+      {:custo-filamento           (bd2 custo-filamento)
+       :custo-energia             (bd2 custo-energia)
+       :custo-fixo                (bd2 custo-fixo)
+       :custo-amortizacao         (bd2 custo-amortizacao)
+       :custo-total               (bd2 custo-total)
+       :preco-consumidor-sugerido (bd2 preco-consumidor)
+       :preco-lojista-sugerido    (bd2 preco-lojista)
+       :preco-venda-real          (bd2 preco-venda)
+       :lucro-bruto               (bd2 (:lucro-bruto lucros))
+       :lucro-liquido             (bd2 (:lucro-liquido lucros))
+       :margem-percentual         (bd2 (:margem-percentual lucros))}))

@@ -1,3 +1,7 @@
+(require '[print-manager.api :as api])
+(api/start-server! :port 3000)
+
+
 ### Health Check
 GET http://localhost:3000/api/health
 
@@ -16,7 +20,7 @@ Content-Type: application/json
 
 {
   "email": "isaacnewton.montinegro@gmail.com",
-  "code": "217239"
+  "code": "896547"
 }
 
 
@@ -53,10 +57,10 @@ POST http://localhost:3000/api/filamentos
 Content-Type: application/json
 
 {
-  "nome": "PLA Preto Bambu",
+  "nome": "PLA Branco Bambu",
   "marca": "Bambu Lab",
   "tipo": "PLA",
-  "cor": "Preto",
+  "cor": "Branco",
   "peso-inicial-g": 1000,
-  "preco-compra": 89.90
+  "preco-compra": 99.90
 }
