@@ -121,15 +121,13 @@
                 :custo_amortizacao         (:custo-amortizacao custos)
                 :custo_total               (:custo-total custos)
 
-                ;; 🔹 preços sugeridos
                 :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
                 :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
 
-                ;; 🔹 preço efetivo de venda (inicial = sugerido consumidor)
+                ;; aqui: mantém compatibilidade
                 :preco_venda               (:preco-venda-real custos)
                 :preco_venda_real          (:preco-venda-real custos)
 
-                ;; lucro líquido vai pra margem_lucro
                 :margem_lucro              (:lucro-liquido custos)
                 :sincronizado              true})]
 
