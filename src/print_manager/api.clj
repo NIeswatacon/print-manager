@@ -352,13 +352,30 @@
 
 (defonce server (atom nil))
 
-(defn start-server! [& {:keys [port] :or {port 3000}}]
+(defn start-server!
+  [& {:keys [port] :or {port 3000}}]
+
   (when-let [s @server]
     (.stop s))
-  (reset! server (jetty/run-jetty #'app-with-cors
-                                  {:port port
-                                   :join? false}))
-  (println (str "Server running on http://Localhost:" port)))
+
+  (println ">>> Starting server with CORS enabled...")
+
+  ;; CORS AQUI É APLICADO SOBRE app DIRETO (SEM #' !!!)
+  (let [handler
+        (wrap-cors app
+                   :access-control-allow-origin [#".*"]
+                   :access-control-allow-methods [:get :post :put :delete :options]
+                   :access-control-allow-headers ["Content-Type" "Authorization"])]
+
+    (reset! server
+            (jetty/run-jetty handler
+                             {:port port
+                              :join? false})))
+
+  (println (str ">>> BACKEND ON http://localhost:" port)))
+
+
+
 
 (defn stop-server! []
   (when-let [s @server]

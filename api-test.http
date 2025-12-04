@@ -10,8 +10,8 @@ POST http://localhost:3000/api/auth/bambu
 Content-Type: application/json
 
 {
-  "email": "isaacnewton.montinegro@gmail.com",
-  "password": "Rising2003!"
+  "email": "joaoabmorais@gmail.com",
+  "password": "Tgcfnaf231@"
 }
 
 ### 2 - Confirmar com código
@@ -19,8 +19,8 @@ POST http://localhost:3000/api/auth/bambu
 Content-Type: application/json
 
 {
-  "email": "isaacnewton.montinegro@gmail.com",
-  "code": "047698"
+  "email": "joaoabmorais@gmail.com",
+  "code": "366762"
 }
 
 
@@ -51,6 +51,7 @@ Content-Type: application/json
   "peso-inicial-g": 1000,
   "preco-compra": 80.00
 }
+
 
 ### Adicionar filamento PLA Preto Bambu
 POST http://localhost:3000/api/filamentos

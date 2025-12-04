@@ -15,7 +15,7 @@
    :host     "localhost"
    :port     5432
    :user     "postgres"
-   :password "0508"})
+   :password "0774"})
 
 (def datasource (jdbc/get-datasource db-spec))
 

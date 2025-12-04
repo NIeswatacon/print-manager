@@ -5,33 +5,27 @@
             [clojure.tools.logging :as log]))
 
 ;; ---------------------------------------------------------
-;; TOKEN: pegar do banco (sem renovar por enquanto)
+;; TOKEN
 ;; ---------------------------------------------------------
 
 (defn obter-ou-renovar-token
-  "Por enquanto, só devolve o access-token salvo no banco."
   []
   (when-let [creds (db/buscar-bambu-credentials)]
     (:bambu_credentials/access_token creds)))
 
 ;; ---------------------------------------------------------
-;; AUTENTICAÇÃO EM 2 ETAPAS
+;; AUTENTICAÇÃO
 ;; ---------------------------------------------------------
 
 (defn autenticar-bambu-com-senha!
-  "1º passo: usa email+senha. Para contas Google, a Bambu responde loginType=verifyCode
-   e manda um código por e-mail."
   [email password]
   (let [resp (bambu/login-password email password)]
     (cond
       (nil? resp)
-      {:success false
-       :message "Falha na comunicação com a Bambu Cloud."}
+      {:success false :message "Falha na comunicação com a Bambu Cloud."}
 
       (= "verifyCode" (:loginType resp))
-      {:success false
-       :requires-code true
-       :message "Código de verificação enviado para o seu e-mail. Chame novamente com email+code."}
+      {:success false :requires-code true :message "Código enviado para o e-mail."}
 
       (:accessToken resp)
       (let [token   (:accessToken resp)
@@ -41,32 +35,25 @@
             device-id (:dev_id (first devices))
             expiry-instant (.plusSeconds (java.time.Instant/now) expires)]
         (db/salvar-bambu-credentials!
-          {:email email
-           :access-token token
-           :refresh-token refresh
-           :token-expiry expiry-instant
-           :device-id device-id})
-        {:success true
-         :message "Autenticado com sucesso"
-         :device-id device-id})
+         {:email email
+          :access-token token
+          :refresh-token refresh
+          :token-expiry expiry-instant
+          :device-id device-id})
+        {:success true :message "Autenticado com sucesso" :device-id device-id})
 
       :else
-      {:success false
-       :message (str "Resposta inesperada da Bambu Cloud ao autenticar com senha: "
-                     (pr-str resp))})))
+      {:success false :message (str "Erro inesperado: " (pr-str resp))})))
 
 (defn autenticar-bambu-com-codigo!
-  "2º passo: usa email+code (recebido por e-mail) para obter accessToken e salvar no banco."
   [email code]
   (let [resp (bambu/login-code email code)]
     (cond
       (nil? resp)
-      {:success false
-       :message "Falha ao validar o código na Bambu Cloud."}
+      {:success false :message "Falha ao validar código."}
 
       (not (:accessToken resp))
-      {:success false
-       :message (str "Código inválido ou expirado. Resposta: " (pr-str resp))}
+      {:success false :message (str "Código inválido. " (pr-str resp))}
 
       :else
       (let [token   (:accessToken resp)
@@ -76,105 +63,111 @@
             device-id (:dev_id (first devices))
             expiry-instant (.plusSeconds (java.time.Instant/now) expires)]
         (db/salvar-bambu-credentials!
-          {:email email
-           :access-token token
-           :refresh-token refresh
-           :token-expiry expiry-instant
-           :device-id device-id})
-        {:success true
-         :message "Autenticado com sucesso com código"
-         :device-id device-id}))))
+         {:email email
+          :access-token token
+          :refresh-token refresh
+          :token-expiry expiry-instant
+          :device-id device-id})
+        {:success true :message "Autenticado com sucesso" :device-id device-id}))))
 
 ;; ---------------------------------------------------------
-;; PROCESSAMENTO DE IMPRESSÃO
+;; PROCESSAMENTO (COM LÓGICA DE ATUALIZAÇÃO)
 ;; ---------------------------------------------------------
 
 (defn processar-impressao
-  "Processa uma impressão do Bambu: calcula custos e salva no banco"
+  "Processa e salva/atualiza uma impressão"
   [task-data filamento-id config]
-  (let [;; Buscar o filamento para pegar o custo-por-kg
-        filamento     (db/buscar-filamento filamento-id)
-        custo-por-kg  (:filamentos/custo_por_kg filamento)
+  (let [;; Tenta buscar impressão existente
+         impressao-existente (db/buscar-impressao-por-bambu-id (:bambu-task-id task-data))
 
-        ;; Dados básicos da task
-        impressao-base {:bambu_task_id (:bambu-task-id task-data)
-                        :nome           (:nome task-data)
-                        :filamento_id   filamento-id
-                        :data_inicio    (:data-inicio task-data)
-                        :data_fim       (:data-fim task-data)
-                        :tempo_minutos  (:tempo-minutos task-data)
-                        :peso_usado_g   (:peso-usado-g task-data)
-                        :status         (:status task-data)}
+         ;; Verifica se status mudou
+         status-mudou? (and impressao-existente
+                            (not= (:impressoes/status impressao-existente) (:status task-data)))]
 
-        ;; Calcular custos
-        custos (calc/calcular-impressao-completa
-                 {:tempo-minutos (:tempo-minutos task-data)
-                  :peso-usado-g  (:peso-usado-g task-data)}
-                 (assoc config :custo-por-kg custo-por-kg))
+    ;; Se existe e status é igual, ignora (retorna nil)
+    (if (and impressao-existente (not status-mudou?))
+      nil
 
-        ;; Monta o mapa final que vai pro banco
-        impressao-completa
-        (merge impressao-base
-               {:custo_filamento           (:custo-filamento custos)
-                :custo_energia             (:custo-energia custos)
-                :custo_fixo                (:custo-fixo custos)
-                :custo_amortizacao         (:custo-amortizacao custos)
-                :custo_total               (:custo-total custos)
+      ;; Se é nova OU status mudou, processa
+      (let [filamento     (db/buscar-filamento filamento-id)
+            custo-por-kg  (or (:filamentos/custo_por_kg filamento)
+                              (:custo_por_kg filamento)
+                              (:custo-por-kg filamento))
 
-                :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
-                :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
+            tempo-minutos (or (:tempo-minutos task-data) 0)
+            peso-usado-g  (or (:peso-usado-g task-data) 0)
 
-                ;; aqui: mantém compatibilidade
-                :preco_venda               (:preco-venda-real custos)
-                :preco_venda_real          (:preco-venda-real custos)
+            ;; Calcula custos (protegido contra nils)
+            custos (if (and (pos? tempo-minutos) (pos? peso-usado-g) (pos? (or custo-por-kg 0)))
+                     (calc/calcular-impressao-completa
+                      {:tempo-minutos tempo-minutos :peso-usado-g peso-usado-g}
+                      (assoc config :custo-por-kg custo-por-kg))
+                     {:custo-total 0M :lucro-liquido 0M :preco-venda-real 0M :custo-filamento 0M
+                      :custo-energia 0M :custo-fixo 0M :custo-amortizacao 0M
+                      :preco-consumidor-sugerido 0M :preco-lojista-sugerido 0M})
 
-                :margem_lucro              (:lucro-liquido custos)
-                :sincronizado              true})]
+            base-data (merge {:bambu_task_id (:bambu-task-id task-data)
+                              :nome          (:nome task-data)
+                              :filamento_id  filamento-id
+                              :data_inicio   (:data-inicio task-data)
+                              :data_fim      (:data-fim task-data)
+                              :tempo_minutos tempo-minutos
+                              :peso_usado_g  peso-usado-g
+                              :status        (:status task-data)
+                              :sincronizado  true}
+                             ;; Mapeamento corrigido dos custos
+                             {:custo_filamento           (:custo-filamento custos)
+                              :custo_energia             (:custo-energia custos)
+                              :custo_fixo                (:custo-fixo custos)  ;; <--- CORRIGIDO: UNDERLINE _
+                              :custo_amortizacao         (:custo-amortizacao custos)
+                              :custo_total               (:custo-total custos)
+                              :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
+                              :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
+                              :preco_venda               (:preco-venda-real custos)
+                              :preco_venda_real          (:preco-venda-real custos)
+                              :margem_lucro              (:lucro-liquido custos)})]
 
+        (if impressao-existente
+          ;; ATUALIZAR
+          (do
+            (log/info "Atualizando status:" (:nome task-data) "->" (:status task-data))
+            (db/atualizar-impressao! (:impressoes/id impressao-existente) base-data)
+            base-data)
 
-    ;; Salvar no banco
-    (db/criar-impressao! impressao-completa)
-
-    ;; Atualizar estoque de filamento
-    (when (= (:status task-data) "success")
-      (db/atualizar-estoque-filamento! filamento-id (:peso-usado-g task-data)))
-
-    impressao-completa))
-
-
-;; ---------------------------------------------------------
-;; SINCRONIZAÇÃO COM Bambu Cloud
-;; ---------------------------------------------------------
+          ;; CRIAR NOVA
+          (do
+            (db/criar-impressao! base-data)
+            ;; Só baixa stock se for sucesso
+            (when (and (= (:status task-data) "success") (pos? peso-usado-g))
+              (db/atualizar-estoque-filamento! filamento-id peso-usado-g))
+            base-data))))))
 
 (defn sincronizar-impressoes!
-  "Sincroniza todas as impressões do Bambu Cloud que ainda não estão no banco."
   [& {:keys [filamento-id-padrao] :or {filamento-id-padrao nil}}]
   (if-let [token (obter-ou-renovar-token)]
     (let [creds        (db/buscar-bambu-credentials)
           device-id    (:bambu_credentials/device_id creds)
           tasks        (bambu/sync-tasks token device-id)
           config       (db/get-all-configs)
-          novas-tasks  (filter
-                         (fn [task]
-                           (nil? (db/buscar-impressao-por-bambu-id
-                                   (:bambu-task-id task))))
-                         tasks)
+
           filamento-id (or filamento-id-padrao
-                           (:filamentos/id (first (db/listar-filamentos))))
+                           (let [f (first (db/listar-filamentos))]
+                             (or (:filamentos/id f) (:id f))))
+
           resultados   (doall
-                         (map (fn [t]
-                                (try
-                                  (processar-impressao t filamento-id config)
-                                  (catch Exception e
-                                    (log/error e "Erro ao processar impressão" t)
-                                    nil)))
-                              novas-tasks))]
-      {:success           true
-       :total-tasks       (count tasks)
-       :novas-sincronizadas (count (filter some? resultados))
-       :tasks             resultados})
-    {:success false
-     :message "Não autenticado. Faça auth na Bambu primeiro (senha + código)."}))
+                        (map (fn [t]
+                               (try
+                                 (if filamento-id
+                                   (processar-impressao t filamento-id config)
+                                   (throw (ex-info "Sem filamento." {})))
+                                 (catch Exception e
+                                   (log/error "Erro task:" (:bambu-task-id t) (.getMessage e))
+                                   nil)))
+                             tasks))]
+      {:success true
+       :total-tasks (count tasks)
+       :processadas (count (filter some? resultados))})
+    {:success false :message "Não autenticado."}))
 
 ;; ---------------------------------------------------------
 ;; RECÁLCULO DE CUSTOS
@@ -186,22 +179,22 @@
   (when-let [impressao (db/buscar-impressao impressao-id)]
     (let [config (db/get-all-configs)
           custos (calc/calcular-impressao-completa
-                   {:tempo-minutos    (:impressoes/tempo_minutos impressao)
-                    :peso-usado-g     (:impressoes/peso_usado_g impressao)
-                    :custo-acessorios (:impressoes/custo_acessorios impressao)
-                    :preco-venda      (:impressoes/preco_venda impressao)}
-                   config)]
+                  {:tempo-minutos    (:impressoes/tempo_minutos impressao)
+                   :peso-usado-g     (:impressoes/peso_usado_g impressao)
+                   :custo-acessorios (:impressoes/custo_acessorios impressao)
+                   :preco-venda      (:impressoes/preco_venda impressao)}
+                  config)]
       (db/atualizar-impressao!
-        impressao-id
-        {:custo_filamento           (:custo-filamento custos)
-         :custo_energia             (:custo-energia custos)
-         :custo_fixo                (:custo-fixo custos)
-         :custo_amortizacao         (:custo-amortizacao custos)
-         :custo_total               (:custo-total custos)
-         :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
-         :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
-         :preco_venda_real          (:preco-venda-real custos)
-         :margem_lucro              (:lucro-liquido custos)})
+       impressao-id
+       {:custo_filamento           (:custo-filamento custos)
+        :custo_energia             (:custo-energia custos)
+        :custo_fixo                (:custo-fixo custos)
+        :custo_amortizacao         (:custo-amortizacao custos)
+        :custo_total               (:custo-total custos)
+        :preco_consumidor_sugerido (:preco-consumidor-sugerido custos)
+        :preco_lojista_sugerido    (:preco-lojista-sugerido custos)
+        :preco_venda_real          (:preco-venda-real custos)
+        :margem_lucro              (:lucro-liquido custos)})
       custos)))
 
 
@@ -222,8 +215,8 @@
     {:filamentos {:total          (count filamentos)
                   :estoque-total-g (reduce + (map :filamentos/peso_atual_g filamentos))
                   :valor-estoque  (reduce + (map #(* (:filamentos/peso_atual_g %)
-                                                     (/ (:filamentos/preco_compra %)
-                                                        (:filamentos/peso_inicial_g %)))
+                                                   (/ (:filamentos/preco_compra %)
+                                                      (:filamentos/peso_inicial_g %)))
                                                  filamentos))}
      :mes-atual {:ano             ano-atual
                  :mes             mes-atual
